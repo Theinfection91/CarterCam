@@ -1,0 +1,6 @@
+@CarterCam.API_HostAddress = http://localhost:5157
+
+GET {{CarterCam.API_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

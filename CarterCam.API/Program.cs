@@ -109,7 +109,7 @@ public partial class Program
         });
 
         // ---- Serve the live viewer HTML
-        app.MapGet("/", () => Results.Content(GetViewerHtml(ip), "text/html"));
+        app.MapGet("/", () => Results.Content(GetViewerHtml(), "text/html"));
 
         if (app.Environment.IsDevelopment())
             app.MapOpenApi();
@@ -121,10 +121,11 @@ public partial class Program
         app.Run("http://0.0.0.0:5157");
     }
 
-    private static string GetViewerHtml(string serverIp) => $$"""
+    private static string GetViewerHtml() => """
         <!DOCTYPE html>
         <html>
         <head>
+            <meta charset="UTF-8">
             <title>CarterCam Live</title>
             <style>
                 * { box-sizing: border-box; }
@@ -149,6 +150,7 @@ public partial class Program
                     padding: 5px 15px;
                     border-radius: 20px;
                     font-size: 14px;
+                    font-weight: bold;
                 }
                 .connected { background: #2e7d32; }
                 .disconnected { background: #c62828; }
@@ -177,6 +179,7 @@ public partial class Program
                     border-radius: 8px;
                     cursor: pointer;
                     transition: all 0.2s;
+                    font-weight: bold;
                 }
                 button:hover { transform: scale(1.05); }
                 button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
@@ -192,18 +195,18 @@ public partial class Program
             </style>
         </head>
         <body>
-            <h1>🎥 CarterCam Live</h1>
+            <h1>CarterCam Live</h1>
             
             <div class="status-bar">
                 <div id="connStatus" class="status connecting">Connecting...</div>
-                <div id="recStatus" class="status not-recording">⏹️ Not Recording</div>
+                <div id="recStatus" class="status not-recording">NOT RECORDING</div>
             </div>
             
             <img id="stream" width="640" height="480" alt="Live Stream">
             
             <div class="controls">
-                <button id="startBtn" onclick="startRecording()">🔴 Start Recording</button>
-                <button id="stopBtn" onclick="stopRecording()" disabled>⏹️ Stop Recording</button>
+                <button id="startBtn" onclick="startRecording()">START RECORDING</button>
+                <button id="stopBtn" onclick="stopRecording()" disabled>STOP RECORDING</button>
             </div>
             
             <div class="stats">
@@ -230,99 +233,102 @@ public partial class Program
                     connStatus.textContent = 'Connecting...';
                     connStatus.className = 'status connecting';
                     
-                    ws = new WebSocket(`ws://${window.location.host}/ws/live`);
+                    ws = new WebSocket('ws://' + window.location.host + '/ws/live');
                     ws.binaryType = 'arraybuffer';
                     
-                    ws.onopen = () => {
-                        connStatus.textContent = '🟢 Live';
+                    ws.onopen = function() {
+                        connStatus.textContent = 'LIVE';
                         connStatus.className = 'status connected';
                         checkRecordingStatus();
                     };
                     
-                    ws.onmessage = (event) => {
+                    ws.onmessage = function(event) {
                         const blob = new Blob([event.data], { type: 'image/jpeg' });
                         const url = URL.createObjectURL(blob);
-                        img.onload = () => URL.revokeObjectURL(url);
+                        img.onload = function() { URL.revokeObjectURL(url); };
                         img.src = url;
                         
                         frameCount++;
                         totalFrames++;
                         const now = performance.now();
                         if (now - lastTime >= 1000) {
-                            fpsDisplay.textContent = `FPS: ${frameCount}`;
+                            fpsDisplay.textContent = 'FPS: ' + frameCount;
                             frameCount = 0;
                             lastTime = now;
                         }
-                        framesDisplay.textContent = `Frames: ${totalFrames}`;
+                        framesDisplay.textContent = 'Frames: ' + totalFrames;
                     };
                     
-                    ws.onclose = () => {
-                        connStatus.textContent = '🔴 Disconnected';
+                    ws.onclose = function() {
+                        connStatus.textContent = 'DISCONNECTED';
                         connStatus.className = 'status disconnected';
                         setTimeout(connect, 2000);
                     };
                     
-                    ws.onerror = () => ws.close();
+                    ws.onerror = function() { ws.close(); };
                 }
                 
-                async function startRecording() {
+                function startRecording() {
                     startBtn.disabled = true;
-                    try {
-                        const res = await fetch('/api/recording/start', { method: 'POST' });
-                        const data = await res.json();
-                        if (data.recording) {
-                            isRecording = true;
-                            updateRecordingUI();
-                        }
-                    } catch (e) {
-                        console.error('Failed to start recording:', e);
-                    }
-                    startBtn.disabled = false;
+                    fetch('/api/recording/start', { method: 'POST' })
+                        .then(function(res) { return res.json(); })
+                        .then(function(data) {
+                            if (data.recording) {
+                                isRecording = true;
+                                updateRecordingUI();
+                            }
+                            startBtn.disabled = false;
+                        })
+                        .catch(function(e) {
+                            console.error('Failed to start recording:', e);
+                            startBtn.disabled = false;
+                        });
                 }
                 
-                async function stopRecording() {
+                function stopRecording() {
                     stopBtn.disabled = true;
-                    try {
-                        const res = await fetch('/api/recording/stop', { method: 'POST' });
-                        const data = await res.json();
-                        if (!data.recording) {
-                            isRecording = false;
-                            updateRecordingUI();
-                        }
-                    } catch (e) {
-                        console.error('Failed to stop recording:', e);
-                    }
-                    stopBtn.disabled = false;
+                    fetch('/api/recording/stop', { method: 'POST' })
+                        .then(function(res) { return res.json(); })
+                        .then(function(data) {
+                            if (!data.recording) {
+                                isRecording = false;
+                                updateRecordingUI();
+                            }
+                            stopBtn.disabled = false;
+                        })
+                        .catch(function(e) {
+                            console.error('Failed to stop recording:', e);
+                            stopBtn.disabled = false;
+                        });
                 }
                 
-                async function checkRecordingStatus() {
-                    try {
-                        const res = await fetch('/api/recording/status');
-                        const data = await res.json();
-                        isRecording = data.recording;
-                        updateRecordingUI();
-                    } catch (e) {
-                        console.error('Failed to check recording status:', e);
-                    }
+                function checkRecordingStatus() {
+                    fetch('/api/recording/status')
+                        .then(function(res) { return res.json(); })
+                        .then(function(data) {
+                            isRecording = data.recording;
+                            updateRecordingUI();
+                        })
+                        .catch(function(e) {
+                            console.error('Failed to check recording status:', e);
+                        });
                 }
                 
                 function updateRecordingUI() {
                     if (isRecording) {
-                        recStatus.textContent = '🔴 Recording';
+                        recStatus.textContent = 'RECORDING';
                         recStatus.className = 'status recording';
                         startBtn.disabled = true;
                         stopBtn.disabled = false;
                     } else {
-                        recStatus.textContent = '⏹️ Not Recording';
+                        recStatus.textContent = 'NOT RECORDING';
                         recStatus.className = 'status not-recording';
                         startBtn.disabled = false;
                         stopBtn.disabled = true;
                     }
                 }
                 
-                // Poll recording status every 5 seconds
                 setInterval(checkRecordingStatus, 5000);
-                
                 connect();
             </script>
         </body>

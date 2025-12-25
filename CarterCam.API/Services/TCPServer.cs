@@ -124,7 +124,7 @@ namespace CarterCam.API.Services
                     if (_frameCount % 30 == 0)
                     {
                         double fps = _frameCount / _stopwatch.Elapsed.TotalSeconds;
-                        var recStatus = IsRecording ? "🔴 REC" : "⏹️";
+                        var recStatus = IsRecording ? "[REC]" : "";
                         Console.WriteLine($"[TCP] {_frameCount} frames, {fps:F1} fps, WS: {_broadcaster.ClientCount} {recStatus}");
                     }
                 }

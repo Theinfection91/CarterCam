@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "CarterCam.TCPServer": {
+      "commandName": "Project"
+    },
+    "Container (Dockerfile)": {
+      "commandName": "Docker"
+    }
+  }
+}

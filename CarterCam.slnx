@@ -5,5 +5,5 @@
     <Platform Name="x86" />
   </Configurations>
   <Project Path="CarterCam.API/CarterCam.API.csproj" />
-  <Project Path="CarterCam.Ingestor/CarterCam.Ingestor.vcxproj" />
+  <Project Path="CarterCam.Ingestor/CarterCam.Ingestor.vcxproj" Id="b9872cd2-afbe-40e1-a827-87326c763112" />
 </Solution>

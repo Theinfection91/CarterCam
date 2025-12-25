@@ -7,7 +7,14 @@ public partial class Program
     {
         var builder = WebApplication.CreateBuilder(args);
 
-        // ---- Ingestion Engine (starts ONCE via constructor)
+        // ---- Encoder (must start FIRST to create pipe)
+        builder.Services.AddSingleton<EncoderLauncher>(_ =>
+            new EncoderLauncher(
+                @"C:\Chase\ESP32 Projects\CarterCam\x64\Debug\CarterCam.Encoder.exe"
+            )
+        );
+
+        // ---- Ingestion Engine
         builder.Services.AddSingleton<IngestionLauncher>(_ =>
             new IngestionLauncher(
                 @"C:\Chase\ESP32 Projects\CarterCam\x64\Debug\CarterCam.Ingestor.exe"
@@ -26,7 +33,13 @@ public partial class Program
 
         var app = builder.Build();
 
-        // ---- Start TCP server
+        // ---- Start Encoder first, then TCP server
+        var encoder = app.Services.GetRequiredService<EncoderLauncher>();
+        encoder.Start();
+        
+        // Give pipe time to initialize
+        Thread.Sleep(500);
+
         var tcpServer = app.Services.GetRequiredService<TCPServer>();
         Task.Run(() => tcpServer.Start());
 

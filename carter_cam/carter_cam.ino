@@ -10,8 +10,8 @@ const char* ssid     = "CarterWIFI";
 const char* password = "3366019747";
 
 // TCP server info
-const char* serverIp = "192.168.1.118"; // Your C# server IP
-const uint16_t serverPort = 5000;       // TCP port from TcpFrameServer
+const char* serverIp = "192.168.1.118";
+const uint16_t serverPort = 5000;
 
 WiFiClient client;
 
@@ -20,22 +20,30 @@ bool sendFrame(camera_fb_t* fb);
 
 void setup() {
   Serial.begin(115200);
-  Serial.setDebugOutput(true);
+  Serial.setDebugOutput(false);
   Serial.println();
 
   cameraInit();
 
+  // Optimize WiFi
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
   WiFi.begin(ssid, password);
+  
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
-  Serial.println();
-  Serial.println("WiFi connected");
-  Serial.print("Camera Ready! Use IP: ");
+  
+  Serial.println("\nWiFi connected");
+  Serial.print("IP: ");
   Serial.println(WiFi.localIP());
-
-  // Connect to TCP server
+  Serial.print("RSSI: ");
+  Serial.println(WiFi.RSSI());
+  
+  client.setTimeout(1000);
+  client.setNoDelay(true);
+  
   if (!client.connect(serverIp, serverPort)) {
     Serial.println("Failed to connect to TCP server");
   } else {
@@ -44,32 +52,49 @@ void setup() {
 }
 
 void loop() {
+  static uint32_t frameCount = 0;
+  static uint32_t lastFpsTime = 0;
+  static uint32_t sendTime = 0;
+  
   if (!client.connected()) {
     Serial.println("TCP disconnected, reconnecting...");
     client.stop();
+    delay(100);
     if (!client.connect(serverIp, serverPort)) {
       Serial.println("Reconnect failed");
       delay(1000);
       return;
     }
-    Serial.println("Reconnected to TCP server");
+    client.setNoDelay(true);
+    Serial.println("Reconnected");
   }
 
+  uint32_t captureStart = millis();
   camera_fb_t* fb = esp_camera_fb_get();
+  uint32_t captureTime = millis() - captureStart;
+  
   if (!fb) {
-    Serial.println("Camera capture failed");
-    delay(100);
+    Serial.println("Capture failed");
     return;
   }
 
-  if (sendFrame(fb)) {
-    Serial.printf("Frame sent, size: %d bytes\n", fb->len);
-  } else {
-    Serial.println("Failed to send frame");
-  }
-
+  uint32_t sendStart = millis();
+  bool sent = sendFrame(fb);
+  sendTime = millis() - sendStart;
+  
   esp_camera_fb_return(fb);
-  delay(30); // ~30 FPS
+
+  if (sent) {
+    frameCount++;
+    
+    uint32_t now = millis();
+    if (now - lastFpsTime >= 1000) {
+      Serial.printf("FPS: %d | Size: %d | Capture: %dms | Send: %dms | RSSI: %d\n", 
+                    frameCount, fb->len, captureTime, sendTime, WiFi.RSSI());
+      frameCount = 0;
+      lastFpsTime = now;
+    }
+  }
 }
 
 void cameraInit() {
@@ -92,43 +117,44 @@ void cameraInit() {
   config.pin_sccb_scl = SIOC_GPIO_NUM;
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
-  config.xclk_freq_hz = 10000000;
-  config.frame_size = FRAMESIZE_VGA;
+  
+  config.xclk_freq_hz = 20000000;
+  config.frame_size = FRAMESIZE_QVGA;  // Back to 320x240 for speed
   config.pixel_format = PIXFORMAT_JPEG;
-  config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
+  config.grab_mode = CAMERA_GRAB_LATEST;
   config.fb_location = CAMERA_FB_IN_PSRAM;
-  config.jpeg_quality = 12;
-  config.fb_count = 1;
+  config.jpeg_quality = 12;  // Slightly better quality
+  config.fb_count = 2;
 
-  if (psramFound()) {
-    config.jpeg_quality = 10;
-    config.fb_count = 2;
-    config.grab_mode = CAMERA_GRAB_LATEST;
-  } else {
-    config.frame_size = FRAMESIZE_SVGA;
+  if (!psramFound()) {
     config.fb_location = CAMERA_FB_IN_DRAM;
+    config.fb_count = 1;
   }
 
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) {
-    Serial.printf("Camera init failed with error 0x%x\n", err);
+    Serial.printf("Camera init failed: 0x%x\n", err);
     return;
   }
 
   sensor_t* s = esp_camera_sensor_get();
-  s->set_brightness(s, 1);
-  s->set_saturation(s, 0);
+  if (s) {
+    s->set_brightness(s, 0);     // Normal brightness (was 1)
+    s->set_saturation(s, 0);     // Normal saturation
+    s->set_vflip(s, 1);          // Flip vertically
+    s->set_hmirror(s, 1);        // Mirror horizontally
+  }
 }
 
 bool sendFrame(camera_fb_t* fb) {
   if (!client.connected()) return false;
 
-  // First send frame length (4 bytes)
   uint32_t len = fb->len;
-  client.write((uint8_t*)&len, sizeof(len));
-
-  // Then send raw frame data
-  size_t sent = client.write(fb->buf, fb->len);
-
-  return sent == fb->len;
+  
+  size_t written = client.write((uint8_t*)&len, 4);
+  if (written != 4) return false;
+  
+  written = client.write(fb->buf, fb->len);
+  
+  return written == fb->len;
 }

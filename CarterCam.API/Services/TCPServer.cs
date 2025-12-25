@@ -8,18 +8,21 @@ namespace CarterCam.API.Services
     public class TCPServer
     {
         private readonly int _port;
-        private readonly IngestionLauncher _ingestionLauncher;
+        private readonly FrameBroadcaster _broadcaster;
+        private readonly IngestionLauncher _ingestor;
         private TcpListener? _listener;
         private int _frameCount;
         private readonly Stopwatch _stopwatch = new();
         
-        // Queue to decouple receiving from processing
-        private readonly BlockingCollection<byte[]> _frameQueue = new(boundedCapacity: 5);
+        private readonly BlockingCollection<byte[]> _recordingQueue = new(boundedCapacity: 10);
+        
+        public bool IsRecording { get; private set; }
 
-        public TCPServer(int port, IngestionLauncher ingestionLauncher)
+        public TCPServer(int port, FrameBroadcaster broadcaster, IngestionLauncher ingestor)
         {
             _port = port;
-            _ingestionLauncher = ingestionLauncher;
+            _broadcaster = broadcaster;
+            _ingestor = ingestor;
         }
 
         public void Start()
@@ -28,23 +31,43 @@ namespace CarterCam.API.Services
             _listener.Start();
             Console.WriteLine($"TCP Server started on port {_port}.");
             
-            // Start frame processing on separate thread
-            Task.Run(ProcessFrames);
+            // Start recording processor thread
+            Task.Run(ProcessRecordingQueue);
             
             ListenForClients();
         }
 
-        private void ProcessFrames()
+        public void StartRecording()
         {
-            foreach (var frame in _frameQueue.GetConsumingEnumerable())
+            if (IsRecording) return;
+            
+            _ingestor.Start();
+            IsRecording = true;
+            Console.WriteLine("[Recording] Started");
+        }
+
+        public void StopRecording()
+        {
+            if (!IsRecording) return;
+            
+            IsRecording = false;
+            Console.WriteLine("[Recording] Stopped");
+        }
+
+        private void ProcessRecordingQueue()
+        {
+            foreach (var frame in _recordingQueue.GetConsumingEnumerable())
             {
-                try
+                if (IsRecording)
                 {
-                    _ingestionLauncher.SendFrame(frame);
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[TCP] Frame processing error: {ex.Message}");
+                    try
+                    {
+                        _ingestor.SendFrame(frame);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[Recording] Error: {ex.Message}");
+                    }
                 }
             }
         }
@@ -61,12 +84,9 @@ namespace CarterCam.API.Services
         private async Task HandleClient(TcpClient client)
         {
             Console.WriteLine($"Client connected: {client.Client.RemoteEndPoint}");
-            
-            // Increase receive buffer
             client.ReceiveBufferSize = 65536;
             
             using NetworkStream stream = client.GetStream();
-
             byte[] lengthBuffer = new byte[4];
             _frameCount = 0;
             _stopwatch.Restart();
@@ -75,7 +95,6 @@ namespace CarterCam.API.Services
             {
                 while (true)
                 {
-                    // Read length prefix
                     int read = await ReadExactAsync(stream, lengthBuffer, 4);
                     if (read == 0) break;
 
@@ -93,19 +112,20 @@ namespace CarterCam.API.Services
 
                     _frameCount++;
 
-                    // Non-blocking enqueue - drop frame if queue is full
-                    if (!_frameQueue.TryAdd(frameData))
+                    // Always broadcast to WebSocket (live streaming)
+                    _broadcaster.BroadcastFrame(frameData);
+
+                    // Queue for recording if enabled (non-blocking)
+                    if (IsRecording)
                     {
-                        // Queue full, drop oldest and add new
-                        _frameQueue.TryTake(out _);
-                        _frameQueue.TryAdd(frameData);
+                        _recordingQueue.TryAdd(frameData);
                     }
 
-                    // Log FPS every 30 frames
                     if (_frameCount % 30 == 0)
                     {
                         double fps = _frameCount / _stopwatch.Elapsed.TotalSeconds;
-                        Console.WriteLine($"[TCP] Received {_frameCount} frames, {fps:F1} fps, queue: {_frameQueue.Count}");
+                        var recStatus = IsRecording ? "🔴 REC" : "⏹️";
+                        Console.WriteLine($"[TCP] {_frameCount} frames, {fps:F1} fps, WS: {_broadcaster.ClientCount} {recStatus}");
                     }
                 }
             }

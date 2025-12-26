@@ -7,5 +7,4 @@
   <Project Path="src/CarterCam.API/CarterCam.API.csproj" />
   <Project Path="src/CarterCam.Encoder/CarterCam.Encoder.vcxproj" Id="221adc73-7a07-4e69-9163-aed97b998951" />
   <Project Path="src/CarterCam.Ingestor/CarterCam.Ingestor.vcxproj" Id="b9872cd2-afbe-40e1-a827-87326c763112" />
-  <Project Path="src/CarterCam.TCPServer/CarterCam.TCPServer.csproj" />
 </Solution>

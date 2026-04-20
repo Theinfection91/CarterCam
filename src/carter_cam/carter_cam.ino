@@ -10,7 +10,7 @@ const char* ssid     = "CarterWIFI";
 const char* password = "3366019747";
 
 // TCP server info
-const char* serverIp = "192.168.1.118";
+const char* serverIp = "192.168.1.234";
 const uint16_t serverPort = 5000;
 
 WiFiClient client;

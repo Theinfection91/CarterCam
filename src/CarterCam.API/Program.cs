@@ -233,7 +233,8 @@ public partial class Program
                     connStatus.textContent = 'Connecting...';
                     connStatus.className = 'status connecting';
                     
-                    ws = new WebSocket('ws://' + window.location.host + '/ws/live');
+                    const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+                    ws = new WebSocket(protocol + window.location.host + '/ws/live');
                     ws.binaryType = 'arraybuffer';
                     
                     ws.onopen = function() {

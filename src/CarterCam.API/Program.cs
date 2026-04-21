@@ -167,7 +167,7 @@ public partial class Program
                     max-width: 90vw;
                     background: #000;
                 }
-                .controls {
+                .record-controls {
                     margin-top: 15px;
                     display: flex;
                     gap: 10px;
@@ -192,6 +192,15 @@ public partial class Program
                     display: flex;
                     gap: 20px;
                 }
+                .motor-controls {
+                    margin-top: 15px;
+                    display: flex;
+                    gap: 10px;
+                }
+                button {
+                    background: #1976d2;
+                    color: white;
+                }
             </style>
         </head>
         <body>
@@ -204,9 +213,18 @@ public partial class Program
             
             <img id="stream" width="640" height="480" alt="Live Stream">
             
-            <div class="controls">
+            <div class="record-controls">
                 <button id="startBtn" onclick="startRecording()">START RECORDING</button>
                 <button id="stopBtn" onclick="stopRecording()" disabled>STOP RECORDING</button>
+            </div>
+
+            <div class ="motor-controls">
+                <p>Motor Controls:</p>
+                <button id="leftBtn" onclick="motorLeft()">LEFT</button>
+                <button id="centerBtn" onclick="motorCenter()">CENTER</button>
+                <button id="rightBtn" onclick="motorRight()">RIGHT</button>
+                <button id="startSweepBtn" onclick="startSweep()">START SWEEP</button>
+                <button id="stopSweepBtn" onclick="stopSweep()">STOP SWEEP</button>
             </div>
             
             <div class="stats">

@@ -11,6 +11,7 @@ namespace CarterCam.API.Services
         private readonly FrameBroadcaster _broadcaster;
         private readonly IngestionLauncher _ingestor;
         private TcpListener? _listener;
+        private TcpClient? _connectedClient;         // ← holds the ESP32 socket
         private int _frameCount;
         private readonly Stopwatch _stopwatch = new();
         
@@ -30,17 +31,13 @@ namespace CarterCam.API.Services
             _listener = new TcpListener(IPAddress.Any, _port);
             _listener.Start();
             Console.WriteLine($"TCP Server started on port {_port}.");
-            
-            // Start recording processor thread
             Task.Run(ProcessRecordingQueue);
-            
             ListenForClients();
         }
 
         public void StartRecording()
         {
             if (IsRecording) return;
-            
             _ingestor.Start();
             IsRecording = true;
             Console.WriteLine("[Recording] Started");
@@ -49,9 +46,29 @@ namespace CarterCam.API.Services
         public void StopRecording()
         {
             if (!IsRecording) return;
-            
             IsRecording = false;
             Console.WriteLine("[Recording] Stopped");
+        }
+
+        public void SendMotorCommand(char cmd)
+        {
+            try
+            {
+                var stream = _connectedClient?.GetStream();
+                if (stream is { CanWrite: true })
+                {
+                    stream.WriteByte((byte)cmd);
+                    Console.WriteLine($"[Motor] Sent command: {cmd}");
+                }
+                else
+                {
+                    Console.WriteLine("[Motor] No connected client to send command to");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Motor] Command failed: {ex.Message}");
+            }
         }
 
         private void ProcessRecordingQueue()
@@ -60,14 +77,8 @@ namespace CarterCam.API.Services
             {
                 if (IsRecording)
                 {
-                    try
-                    {
-                        _ingestor.SendFrame(frame);
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"[Recording] Error: {ex.Message}");
-                    }
+                    try { _ingestor.SendFrame(frame); }
+                    catch (Exception ex) { Console.WriteLine($"[Recording] Error: {ex.Message}"); }
                 }
             }
         }
@@ -83,9 +94,10 @@ namespace CarterCam.API.Services
 
         private async Task HandleClient(TcpClient client)
         {
+            _connectedClient = client;               // ← store it here
             Console.WriteLine($"Client connected: {client.Client.RemoteEndPoint}");
             client.ReceiveBufferSize = 65536;
-            
+
             using NetworkStream stream = client.GetStream();
             byte[] lengthBuffer = new byte[4];
             _frameCount = 0;
@@ -99,7 +111,7 @@ namespace CarterCam.API.Services
                     if (read == 0) break;
 
                     int frameLength = BitConverter.ToInt32(lengthBuffer, 0);
-                    
+
                     if (frameLength <= 0 || frameLength > 1_000_000)
                     {
                         Console.WriteLine($"[TCP] Invalid frame length: {frameLength}");
@@ -111,15 +123,10 @@ namespace CarterCam.API.Services
                     if (read == 0) break;
 
                     _frameCount++;
-
-                    // Always broadcast to WebSocket (live streaming)
                     _broadcaster.BroadcastFrame(frameData);
 
-                    // Queue for recording if enabled (non-blocking)
                     if (IsRecording)
-                    {
                         _recordingQueue.TryAdd(frameData);
-                    }
 
                     if (_frameCount % 30 == 0)
                     {
@@ -134,6 +141,7 @@ namespace CarterCam.API.Services
                 Console.WriteLine($"Client error: {ex.Message}");
             }
 
+            _connectedClient = null;                 // ← clear on disconnect
             Console.WriteLine($"Client disconnected: {client.Client.RemoteEndPoint}");
         }
 

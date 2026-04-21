@@ -75,6 +75,37 @@ public partial class Program
             return Results.Ok(new { recording = tcpServer.IsRecording });
         });
 
+        // ---- Motor control API endpoints
+        app.MapPost("/api/motor/left", () =>
+        {
+            tcpServer.SendMotorCommand('L');
+            return Results.Ok(new { message = "Motor moved left" });
+        });
+
+        app.MapPost("/api/motor/center", () =>
+        {
+            tcpServer.SendMotorCommand('C');
+            return Results.Ok(new { message = "Motor centered" });
+        });
+
+        app.MapPost("/api/motor/right", () =>
+        {
+            tcpServer.SendMotorCommand('R');
+            return Results.Ok(new { message = "Motor moved right" });
+        });
+
+        app.MapPost("/api/motor/sweep/start", () =>
+        {
+            tcpServer.SendMotorCommand('S');
+            return Results.Ok(new { message = "Motor sweep started" });
+        });
+
+        app.MapPost("/api/motor/sweep/stop", () =>
+        {
+            tcpServer.SendMotorCommand('X');
+            return Results.Ok(new { message = "Motor sweep stopped" });
+        });
+
         // ---- WebSocket endpoint for live stream
         app.Map("/ws/live", async context =>
         {
@@ -346,7 +377,27 @@ public partial class Program
                         stopBtn.disabled = true;
                     }
                 }
-                
+
+                function motorLeft() {
+                    fetch('/api/motor/left', { method: 'POST' });
+                }
+
+                function motorCenter() {
+                    fetch('/api/motor/center', { method: 'POST' });
+                }
+
+                function motorRight() {
+                    fetch('/api/motor/right', { method: 'POST' });
+                }
+
+                function startSweep() {
+                    fetch('/api/motor/sweep/start', { method: 'POST' });
+                }
+
+                function stopSweep() {
+                    fetch('/api/motor/sweep/stop', { method: 'POST' });
+                }
+
                 setInterval(checkRecordingStatus, 5000);
                 connect();
             </script>

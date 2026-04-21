@@ -21,10 +21,10 @@ const int STEP_IN2 = 3;
 const int STEP_IN3 = 47;
 const int STEP_IN4 = 48;
 
-// 4096 steps = 360 deg  |  ~11.4 steps per degree
-const int STEPS_PER_SIDE   = 455;  // ~40 deg each side = ~80 deg total sweep
-const int STEP_DELAY_MS    = 10;    // speed - lower = faster
-const int STEPPER_PAUSE_MS = 2000;  // pause at each end
+const int STEPS_PER_SIDE   = 525;
+const int STEPS_NUDGE      = 30;   // small movement per L/R button press
+const int STEP_DELAY_MS    = 10;
+const int STEPPER_PAUSE_MS = 3000;
 
 const int stepSequence[8][4] = {
   {1, 0, 0, 0},
@@ -36,6 +36,25 @@ const int stepSequence[8][4] = {
   {0, 0, 0, 1},
   {1, 0, 0, 1}
 };
+
+// ─── Motor command shared state ───────────────────────────────────────────────
+// Commands: 'L' left, 'R' right, 'C' center, 'S' sweep start, 'X' sweep stop
+volatile char motorCommand = 0;
+portMUX_TYPE motorMux = portMUX_INITIALIZER_UNLOCKED;
+
+void setMotorCommand(char cmd) {
+  portENTER_CRITICAL(&motorMux);
+  motorCommand = cmd;
+  portEXIT_CRITICAL(&motorMux);
+}
+
+char getMotorCommand() {
+  portENTER_CRITICAL(&motorMux);
+  char cmd = motorCommand;
+  motorCommand = 0;
+  portEXIT_CRITICAL(&motorMux);
+  return cmd;
+}
 
 void stepMotor(int stepIndex) {
   digitalWrite(STEP_IN1, stepSequence[stepIndex][0]);
@@ -59,22 +78,74 @@ void stepperMove(int steps, int dir, int& stepIndex) {
   }
 }
 
+// Center position = step index 0, track absolute position in steps from center
 void stepperTask(void* pvParameters) {
-  int stepIndex = 0;
+  int stepIndex   = 0;
+  int currentPos  = 0;   // steps from center; negative = left, positive = right
+  bool sweeping   = false;
+  int  sweepDir   = 1;
 
-  // Lock to center on boot
   stepMotor(stepIndex);
   vTaskDelay(300 / portTICK_PERIOD_MS);
-  Serial.println("Stepper centered");
-
-  int dir = 1;
+  Serial.println("Stepper ready");
 
   while (true) {
-    stepperMove(STEPS_PER_SIDE, dir, stepIndex);
-    stepperOff();
-    Serial.printf("Stepper at %s\n", dir == 1 ? "RIGHT" : "LEFT");
-    vTaskDelay(STEPPER_PAUSE_MS / portTICK_PERIOD_MS);
-    dir = -dir;
+    char cmd = getMotorCommand();
+
+    if (cmd == 'L') {
+      sweeping = false;
+      stepperMove(STEPS_NUDGE, -1, stepIndex);
+      currentPos -= STEPS_NUDGE;
+      stepperOff();
+      Serial.println("[Motor] Left nudge");
+    }
+    if (cmd == 'R') {
+      sweeping = false;
+      stepperMove(STEPS_NUDGE, 1, stepIndex);
+      currentPos += STEPS_NUDGE;
+      stepperOff();
+      Serial.println("[Motor] Right nudge");
+    }
+    if (cmd == 'C') {
+      sweeping = false;
+      int dir = (currentPos > 0) ? -1 : 1;
+      stepperMove(abs(currentPos), dir, stepIndex);
+      currentPos = 0;
+      stepperOff();
+      Serial.println("[Motor] Centered");
+    }
+
+    if (cmd == 'S') {
+      // Center first
+      int cdir = (currentPos > 0) ? -1 : 1;
+      stepperMove(abs(currentPos), cdir, stepIndex);
+      currentPos = 0;
+      // Drive to left end so center is the sweep midpoint
+      stepperMove(STEPS_PER_SIDE, -1, stepIndex);
+      currentPos = -STEPS_PER_SIDE;
+      stepperOff();
+      sweeping = true;
+      sweepDir = 1;
+      Serial.println("[Motor] Sweep start (at left end)");
+    }
+    if (cmd == 'X') { sweeping = false; stepperOff(); Serial.println("[Motor] Sweep stop"); }
+
+    if (sweeping) {
+      // Full width = 2x STEPS_PER_SIDE, center is midpoint
+      stepperMove(2 * STEPS_PER_SIDE, sweepDir, stepIndex);
+      currentPos += sweepDir * 2 * STEPS_PER_SIDE;
+      stepperOff();
+      Serial.printf("[Motor] Sweep at %s (pos=%d)\n", sweepDir == 1 ? "RIGHT" : "LEFT", currentPos);
+      for (int i = 0; i < STEPPER_PAUSE_MS / 10; i++) {
+        char c = getMotorCommand();
+        if (c == 'X') { sweeping = false; break; }
+        if (c != 0)   { setMotorCommand(c); break; }
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+      }
+      if (sweeping) sweepDir = -sweepDir;
+    } else {
+      vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
   }
 }
 
@@ -89,7 +160,6 @@ void setup() {
 
   cameraInit();
 
-  // ── Stepper init ──
   pinMode(STEP_IN1, OUTPUT);
   pinMode(STEP_IN2, OUTPUT);
   pinMode(STEP_IN3, OUTPUT);
@@ -140,6 +210,15 @@ void loop() {
     }
     client.setNoDelay(true);
     Serial.println("Reconnected");
+  }
+
+  // ── Read incoming motor commands (non-blocking) ──
+  while (client.available() > 0) {
+    char cmd = (char)client.read();
+    if (cmd == 'L' || cmd == 'R' || cmd == 'C' || cmd == 'S' || cmd == 'X') {
+      Serial.printf("[Motor] Received command: %c\n", cmd);
+      setMotorCommand(cmd);
+    }
   }
 
   uint32_t captureStart = millis();

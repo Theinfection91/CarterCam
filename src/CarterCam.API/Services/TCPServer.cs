@@ -11,20 +11,25 @@ namespace CarterCam.API.Services
         private readonly FrameBroadcaster _broadcaster;
         private readonly IngestionLauncher _ingestor;
         private TcpListener? _listener;
-        private TcpClient? _connectedClient;         // ← holds the ESP32 socket
+        private TcpClient? _connectedClient;
         private int _frameCount;
         private readonly Stopwatch _stopwatch = new();
-        
+
         private readonly BlockingCollection<byte[]> _recordingQueue = new(boundedCapacity: 10);
-        
+
         public bool IsRecording { get; private set; }
         public PersonTracker? Tracker { get; set; }
 
+        // ── Position tracking ──────────────────────────────────────────────────────
+        private const int StepsPerSide = 525;
+        private const int StepsNudge   = 30;
+        private int _currentPos = 0;  // steps from center, negative=left, positive=right
+
         public TCPServer(int port, FrameBroadcaster broadcaster, IngestionLauncher ingestor)
         {
-            _port = port;
+            _port        = port;
             _broadcaster = broadcaster;
-            _ingestor = ingestor;
+            _ingestor    = ingestor;
         }
 
         public void Start()
@@ -53,17 +58,52 @@ namespace CarterCam.API.Services
 
         public void SendMotorCommand(char cmd)
         {
+            // ── Bounds check before sending ────────────────────────────────────────
+            if (cmd == 'L')
+            {
+                if (_currentPos - StepsNudge < -StepsPerSide)
+                {
+                    Console.WriteLine($"[Motor] At left limit ({_currentPos}), ignoring L");
+                    return;
+                }
+                _currentPos -= StepsNudge;
+            }
+            else if (cmd == 'R')
+            {
+                if (_currentPos + StepsNudge > StepsPerSide)
+                {
+                    Console.WriteLine($"[Motor] At right limit ({_currentPos}), ignoring R");
+                    return;
+                }
+                _currentPos += StepsNudge;
+            }
+            else if (cmd == 'C')
+            {
+                _currentPos = 0;
+            }
+            else if (cmd == 'S')
+            {
+                // Sweep resets to left end then sweeps — mirror the .ino logic
+                _currentPos = -StepsPerSide;
+            }
+            else if (cmd == 'X')
+            {
+                // Sweep stopped — position unknown, best assumption is wherever it stopped.
+                // Reset to 0 so bounds don't lock out after stopping a sweep.
+                _currentPos = 0;
+            }
+
             try
             {
                 var stream = _connectedClient?.GetStream();
                 if (stream is { CanWrite: true })
                 {
                     stream.WriteByte((byte)cmd);
-                    Console.WriteLine($"[Motor] Sent command: {cmd}");
+                    Console.WriteLine($"[Motor] Sent {cmd} | pos={_currentPos}/{StepsPerSide}");
                 }
                 else
                 {
-                    Console.WriteLine("[Motor] No connected client to send command to");
+                    Console.WriteLine("[Motor] No connected client");
                 }
             }
             catch (Exception ex)
@@ -95,7 +135,9 @@ namespace CarterCam.API.Services
 
         private async Task HandleClient(TcpClient client)
         {
-            _connectedClient = client;               // ← store it here
+            _connectedClient = client;
+            // Reset position on reconnect — assume ESP32 rebooted to center
+            _currentPos = 0;
             Console.WriteLine($"Client connected: {client.Client.RemoteEndPoint}");
             client.ReceiveBufferSize = 65536;
 
@@ -125,7 +167,7 @@ namespace CarterCam.API.Services
 
                     _frameCount++;
                     _broadcaster.BroadcastFrame(frameData);
-                    Tracker?.ProcessFrame(frameData);   // ← add this
+                    Tracker?.ProcessFrame(frameData);
 
                     if (IsRecording)
                         _recordingQueue.TryAdd(frameData);
@@ -133,8 +175,7 @@ namespace CarterCam.API.Services
                     if (_frameCount % 30 == 0)
                     {
                         double fps = _frameCount / _stopwatch.Elapsed.TotalSeconds;
-                        var recStatus = IsRecording ? "[REC]" : "";
-                        Console.WriteLine($"[TCP] {_frameCount} frames, {fps:F1} fps, WS: {_broadcaster.ClientCount} {recStatus}");
+                        Console.WriteLine($"[TCP] {_frameCount} frames, {fps:F1} fps, WS: {_broadcaster.ClientCount}, pos={_currentPos}");
                     }
                 }
             }
@@ -143,7 +184,7 @@ namespace CarterCam.API.Services
                 Console.WriteLine($"Client error: {ex.Message}");
             }
 
-            _connectedClient = null;                 // ← clear on disconnect
+            _connectedClient = null;
             Console.WriteLine($"Client disconnected: {client.Client.RemoteEndPoint}");
         }
 

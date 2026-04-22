@@ -18,6 +18,7 @@ namespace CarterCam.API.Services
         private readonly BlockingCollection<byte[]> _recordingQueue = new(boundedCapacity: 10);
         
         public bool IsRecording { get; private set; }
+        public PersonTracker? Tracker { get; set; }
 
         public TCPServer(int port, FrameBroadcaster broadcaster, IngestionLauncher ingestor)
         {
@@ -124,6 +125,7 @@ namespace CarterCam.API.Services
 
                     _frameCount++;
                     _broadcaster.BroadcastFrame(frameData);
+                    Tracker?.ProcessFrame(frameData);   // ← add this
 
                     if (IsRecording)
                         _recordingQueue.TryAdd(frameData);

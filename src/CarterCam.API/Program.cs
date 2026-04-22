@@ -26,7 +26,7 @@ public partial class Program
         builder.Services.AddSingleton<TCPServer>(sp =>
         {
             var broadcaster = sp.GetRequiredService<FrameBroadcaster>();
-            var ingestor    = sp.GetRequiredService<IngestionLauncher>();
+            var ingestor = sp.GetRequiredService<IngestionLauncher>();
             return new TCPServer(5000, broadcaster, ingestor);
         });
 
@@ -44,6 +44,9 @@ public partial class Program
         Task.Run(() => tcpServer.Start());
 
         var broadcaster = app.Services.GetRequiredService<FrameBroadcaster>();
+
+        var tracker = new PersonTracker(tcpServer);
+        tcpServer.Tracker = tracker;
 
         string ip = "unknown";
         foreach (var addr in Dns.GetHostEntry(Dns.GetHostName()).AddressList)
@@ -70,17 +73,21 @@ public partial class Program
         app.MapGet("/api/recording/status", () =>
             Results.Ok(new { recording = tcpServer.IsRecording }));
 
-        app.MapPost("/api/motor/left",        () => { tcpServer.SendMotorCommand('L'); return Results.Ok(new { message = "Motor moved left" }); });
-        app.MapPost("/api/motor/center",      () => { tcpServer.SendMotorCommand('C'); return Results.Ok(new { message = "Motor centered" }); });
-        app.MapPost("/api/motor/right",       () => { tcpServer.SendMotorCommand('R'); return Results.Ok(new { message = "Motor moved right" }); });
+        app.MapPost("/api/motor/left", () => { tcpServer.SendMotorCommand('L'); return Results.Ok(new { message = "Motor moved left" }); });
+        app.MapPost("/api/motor/center", () => { tcpServer.SendMotorCommand('C'); return Results.Ok(new { message = "Motor centered" }); });
+        app.MapPost("/api/motor/right", () => { tcpServer.SendMotorCommand('R'); return Results.Ok(new { message = "Motor moved right" }); });
         app.MapPost("/api/motor/sweep/start", () => { tcpServer.SendMotorCommand('S'); return Results.Ok(new { message = "Motor sweep started" }); });
-        app.MapPost("/api/motor/sweep/stop",  () => { tcpServer.SendMotorCommand('X'); return Results.Ok(new { message = "Motor sweep stopped" }); });
+        app.MapPost("/api/motor/sweep/stop", () => { tcpServer.SendMotorCommand('X'); return Results.Ok(new { message = "Motor sweep stopped" }); });
+
+        app.MapPost("/api/tracking/start", () => { tracker.Enabled = true; return Results.Ok(new { tracking = true }); });
+        app.MapPost("/api/tracking/stop", () => { tracker.Enabled = false; return Results.Ok(new { tracking = false }); });
+        app.MapGet("/api/tracking/status", () => Results.Ok(new { tracking = tracker.Enabled }));
 
         app.Map("/ws/live", async context =>
         {
             if (context.WebSockets.IsWebSocketRequest)
             {
-                var ws       = await context.WebSockets.AcceptWebSocketAsync();
+                var ws = await context.WebSockets.AcceptWebSocketAsync();
                 var clientId = Guid.NewGuid().ToString();
                 broadcaster.AddClient(clientId, ws);
 
@@ -409,6 +416,15 @@ public partial class Program
                         <div class="audio-note">Audio streaming not yet implemented &mdash; placeholders only.</div>
                     </div>
 
+                    <!-- Tracking -->
+                    <div class="panel">
+                        <div class="panel-title">&#128100; Human Tracking</div>
+                        <div class="btn-row">
+                            <button id="trackingBtn" onclick="toggleTracking()" style="background:#2e7d32; min-width:160px;">&#128100; START TRACKING</button>
+                        </div>
+                        <div style="font-size:10px;color:#444;margin-top:9px;font-style:italic;">Auto-pans motor to follow detected person. Disables sweep.</div>
+                    </div>
+
                 </div>
             </div>
 
@@ -568,6 +584,27 @@ public partial class Program
                 function startSweep()  { fetch('/api/motor/sweep/start', { method: 'POST' }); toast('Sweep started'); }
                 function stopSweep()   { fetch('/api/motor/sweep/stop',  { method: 'POST' }); toast('Sweep stopped'); }
 
+                // ---- Tracking ----
+                let isTracking = false;
+                const trackingBtn = document.getElementById('trackingBtn');
+
+                function toggleTracking() {
+                    if (isTracking) {
+                        fetch('/api/tracking/stop', { method: 'POST' })
+                            .then(() => { isTracking = false; updateTrackingUI(); toast('Tracking stopped'); });
+                    } else {
+                        // Stop sweep first so they don't fight
+                        fetch('/api/motor/sweep/stop', { method: 'POST' });
+                        fetch('/api/tracking/start', { method: 'POST' })
+                            .then(() => { isTracking = true; updateTrackingUI(); toast('Tracking started', 'warn'); });
+                    }
+                }
+
+                function updateTrackingUI() {
+                    trackingBtn.textContent = isTracking ? '🛑 STOP TRACKING' : '🧍 START TRACKING';
+                    trackingBtn.style.background = isTracking ? '#b71c1c' : '#2e7d32';
+                }
+
                 // ---- Keyboard shortcuts ----
                 document.addEventListener('keydown', (e) => {
                     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
@@ -577,6 +614,7 @@ public partial class Program
                         case 'c': case 'C': motorCenter(); break;
                         case 's': case 'S': startSweep(); break;
                         case 'x': case 'X': stopSweep();  break;
+                        case 't': case 'T': toggleTracking(); break;
                     }
                 });
 
